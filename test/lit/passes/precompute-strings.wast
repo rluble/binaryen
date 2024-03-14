@@ -25,7 +25,7 @@
 
 
  ;; CHECK:      (func $concat (type $0) (result i32)
- ;; CHECK-NEXT:  (i32.const 0)
+ ;; CHECK-NEXT:  (i32.const 1)
  ;; CHECK-NEXT: )
  (func $concat (export "concat") (result i32)
   (string.eq
