@@ -851,6 +851,36 @@ struct OptimizeInstructions
     }
   }
 
+  void visitStringEq(StringEq* curr) {
+    auto* left =  curr->left->dynCast<StringConst>();
+    auto* right = curr->right->dynCast<StringConst>();
+    if (!left || !right) {
+      return;
+    }
+
+    Builder builder(*getModule());
+    switch (curr->op)
+    {
+    case StringEqEqual:
+      return replaceCurrent(builder.makeConst(Literal(int32_t(left->string == right->string ? 1 : 0))));
+    default:
+      break;
+    }
+  }
+
+  void visitStringConcat(StringConcat* curr) {
+    auto* left =  curr->left->dynCast<StringConst>();
+    auto* right = curr->right->dynCast<StringConst>();
+    if (!left || !right) {
+      return;
+    }
+
+    Name value(left->string.toString() + right->string.toString());
+    Builder builder(*getModule());
+    return replaceCurrent(builder.makeStringConst(value));
+  }
+
+
   void visitUnary(Unary* curr) {
     if (curr->type == Type::unreachable) {
       return;
