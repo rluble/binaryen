@@ -25,6 +25,7 @@ namespace wasm {
 
 Name WASM("wasm");
 Name RETURN_FLOW("*return:)*");
+Name RETURN_CALL_FLOW("*return-call:)*");
 Name NONCONSTANT_FLOW("*nonconstant:)*");
 
 namespace BinaryConsts {
@@ -1248,7 +1249,9 @@ void RefAs::finalize() {
 
 void StringNew::finalize() {
   if (ptr->type == Type::unreachable ||
-      (length && length->type == Type::unreachable)) {
+      (length && length->type == Type::unreachable) ||
+      (start && start->type == Type::unreachable) ||
+      (end && end->type == Type::unreachable)) {
     type = Type::unreachable;
   } else {
     type = Type(HeapType::string, try_ ? Nullable : NonNullable);

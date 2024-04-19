@@ -22,6 +22,7 @@
 #include "lexer.h"
 #include "support/name.h"
 #include "support/result.h"
+#include "support/string.h"
 #include "wasm-builder.h"
 #include "wasm-ir-builder.h"
 #include "wasm.h"
@@ -111,10 +112,12 @@ struct NullTypeParserCtx {
   HeapTypeT makeStringViewWTF8Type() { return Ok{}; }
   HeapTypeT makeStringViewWTF16Type() { return Ok{}; }
   HeapTypeT makeStringViewIterType() { return Ok{}; }
+  HeapTypeT makeContType() { return Ok{}; }
   HeapTypeT makeNoneType() { return Ok{}; }
   HeapTypeT makeNoextType() { return Ok{}; }
   HeapTypeT makeNofuncType() { return Ok{}; }
   HeapTypeT makeNoexnType() { return Ok{}; }
+  HeapTypeT makeNocontType() { return Ok{}; }
 
   TypeT makeI32() { return Ok{}; }
   TypeT makeI64() { return Ok{}; }
@@ -210,10 +213,12 @@ template<typename Ctx> struct TypeParserCtx {
   HeapTypeT makeStringViewWTF8Type() { return HeapType::stringview_wtf8; }
   HeapTypeT makeStringViewWTF16Type() { return HeapType::stringview_wtf16; }
   HeapTypeT makeStringViewIterType() { return HeapType::stringview_iter; }
+  HeapTypeT makeContType() { return HeapType::cont; }
   HeapTypeT makeNoneType() { return HeapType::none; }
   HeapTypeT makeNoextType() { return HeapType::noext; }
   HeapTypeT makeNofuncType() { return HeapType::nofunc; }
   HeapTypeT makeNoexnType() { return HeapType::noexn; }
+  HeapTypeT makeNocontType() { return HeapType::nocont; }
 
   TypeT makeI32() { return Type::i32; }
   TypeT makeI64() { return Type::i64; }
@@ -2491,7 +2496,13 @@ struct ParseDefsCtx : TypeParserCtx<ParseDefsCtx> {
   Result<> makeStringConst(Index pos,
                            const std::vector<Annotation>& annotations,
                            std::string_view str) {
-    return withLoc(pos, irBuilder.makeStringConst(Name(str)));
+    // Re-encode from WTF-8 to WTF-16.
+    std::stringstream wtf16;
+    if (!String::convertWTF8ToWTF16(wtf16, str)) {
+      return in.err(pos, "invalid string constant");
+    }
+    // TODO: Use wtf16.view() once we have C++20.
+    return withLoc(pos, irBuilder.makeStringConst(wtf16.str()));
   }
 
   Result<> makeStringMeasure(Index pos,

@@ -269,6 +269,7 @@ public:
     call->target = target;
     call->operands.set(args);
     call->isReturn = isReturn;
+    call->finalize();
     return call;
   }
   template<typename T>
@@ -1265,12 +1266,17 @@ public:
       return makeRefI31(makeConst(value.geti31()));
     }
     if (type.isString()) {
-      // TODO: more than ascii support
-      std::string string;
+      // The string is already WTF-16, but we need to convert from `Literals` to
+      // actual string.
+      std::stringstream wtf16;
       for (auto c : value.getGCData()->values) {
-        string.push_back(c.getInteger());
+        auto u = c.getInteger();
+        assert(u < 0x10000);
+        wtf16 << uint8_t(u & 0xFF);
+        wtf16 << uint8_t(u >> 8);
       }
-      return makeStringConst(string);
+      // TODO: Use wtf16.view() once we have C++20.
+      return makeStringConst(wtf16.str());
     }
     if (type.isRef() && type.getHeapType() == HeapType::ext) {
       return makeRefAs(ExternExternalize,

@@ -26,6 +26,7 @@
 #include "pass.h"
 #include "shell-interface.h"
 #include "support/colors.h"
+#include "support/string.h"
 #include "wasm-binary.h"
 #include "wasm-builder.h"
 #include "wasm-interpreter.h"
@@ -85,6 +86,7 @@ BinaryenLiteral toBinaryenLiteral(Literal x) {
       case HeapType::any:
       case HeapType::eq:
       case HeapType::func:
+      case HeapType::cont:
       case HeapType::struct_:
       case HeapType::array:
       case HeapType::exn:
@@ -97,6 +99,7 @@ BinaryenLiteral toBinaryenLiteral(Literal x) {
       case HeapType::none:
       case HeapType::noext:
       case HeapType::nofunc:
+      case HeapType::nocont:
       case HeapType::noexn:
         // Null.
         return ret;
@@ -140,6 +143,7 @@ Literal fromBinaryenLiteral(BinaryenLiteral x) {
         WASM_UNREACHABLE("TODO: extern literals");
       case HeapType::eq:
       case HeapType::func:
+      case HeapType::cont:
       case HeapType::struct_:
       case HeapType::array:
       case HeapType::exn:
@@ -152,6 +156,7 @@ Literal fromBinaryenLiteral(BinaryenLiteral x) {
       case HeapType::none:
       case HeapType::noext:
       case HeapType::nofunc:
+      case HeapType::nocont:
       case HeapType::noexn:
         assert(type.isNullable());
         return Literal::makeNull(heapType);
@@ -1895,8 +1900,13 @@ BinaryenExpressionRef BinaryenStringNew(BinaryenModuleRef module,
 }
 BinaryenExpressionRef BinaryenStringConst(BinaryenModuleRef module,
                                           const char* name) {
+  // Re-encode from WTF-8 to WTF-16.
+  std::stringstream wtf16;
+  [[maybe_unused]] bool valid = String::convertWTF8ToWTF16(wtf16, name);
+  assert(valid);
+  // TODO: Use wtf16.view() once we have C++20.
   return static_cast<Expression*>(
-    Builder(*(Module*)module).makeStringConst(name));
+    Builder(*(Module*)module).makeStringConst(wtf16.str()));
 }
 BinaryenExpressionRef BinaryenStringMeasure(BinaryenModuleRef module,
                                             BinaryenOp op,
@@ -6314,10 +6324,6 @@ ExpressionRunnerFlags ExpressionRunnerFlagsDefault() {
 
 ExpressionRunnerFlags ExpressionRunnerFlagsPreserveSideeffects() {
   return CExpressionRunner::FlagValues::PRESERVE_SIDEEFFECTS;
-}
-
-ExpressionRunnerFlags ExpressionRunnerFlagsTraverseCalls() {
-  return CExpressionRunner::FlagValues::TRAVERSE_CALLS;
 }
 
 ExpressionRunnerRef ExpressionRunnerCreate(BinaryenModuleRef module,

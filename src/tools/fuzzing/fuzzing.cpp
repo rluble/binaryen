@@ -16,10 +16,12 @@
 
 #include "tools/fuzzing.h"
 #include "ir/gc-type-utils.h"
+#include "ir/iteration.h"
 #include "ir/local-structural-dominance.h"
 #include "ir/module-utils.h"
 #include "ir/subtypes.h"
 #include "ir/type-updating.h"
+#include "support/string.h"
 #include "tools/fuzzing/heap-types.h"
 #include "tools/fuzzing/parameters.h"
 
@@ -899,6 +901,26 @@ void TranslateToFuzzReader::recombine(Function* func) {
   };
   Modder modder(wasm, scanner, *this);
   modder.walk(func->body);
+  // TODO: A specific form of recombination we should perhaps do more often is
+  //       to recombine among an expression's children, and in particular to
+  //       reorder them.
+}
+
+// Given two expressions, try to replace one of the children of the first with
+// the second. For example, given i32.add and an i32.const, the i32.const could
+// be placed as either of the children of the i32.add. This tramples the
+// existing content there. Returns true if we found a place.
+static bool replaceChildWith(Expression* expr, Expression* with) {
+  for (auto*& child : ChildIterator(expr)) {
+    // To replace, we must have an appropriate type, and we cannot replace a
+    // Pop under any circumstances.
+    if (Type::isSubType(with->type, child->type) &&
+        FindAll<Pop>(child).list.empty()) {
+      child = with;
+      return true;
+    }
+  }
+  return false;
 }
 
 void TranslateToFuzzReader::mutate(Function* func) {
@@ -929,7 +951,6 @@ void TranslateToFuzzReader::mutate(Function* func) {
   percentChance = std::max(percentChance, Index(3));
 
   struct Modder : public PostWalker<Modder, UnifiedExpressionVisitor<Modder>> {
-    Module& wasm;
     TranslateToFuzzReader& parent;
     Index percentChance;
 
@@ -937,8 +958,8 @@ void TranslateToFuzzReader::mutate(Function* func) {
     // executed, so we don't want to do it all the time even in a big function.
     bool allowUnreachable;
 
-    Modder(Module& wasm, TranslateToFuzzReader& parent, Index percentChance)
-      : wasm(wasm), parent(parent), percentChance(percentChance) {
+    Modder(TranslateToFuzzReader& parent, Index percentChance)
+      : parent(parent), percentChance(percentChance) {
       // If the parent allows it then sometimes replace with an unreachable, and
       // sometimes not. Even if we allow it, only do it in certain functions
       // (half the time) and only do it rarely (see below).
@@ -948,29 +969,135 @@ void TranslateToFuzzReader::mutate(Function* func) {
     void visitExpression(Expression* curr) {
       if (parent.upTo(100) < percentChance &&
           parent.canBeArbitrarilyReplaced(curr)) {
-        if (allowUnreachable && parent.oneIn(20)) {
+        // We can replace in various modes, see below. Generate a random number
+        // up to 100 to help us there.
+        int mode = parent.upTo(100);
+
+        if (allowUnreachable && mode < 5) {
           replaceCurrent(parent.make(Type::unreachable));
           return;
         }
+
         // For constants, perform only a small tweaking in some cases.
-        if (auto* c = curr->dynCast<Const>()) {
-          if (parent.oneIn(2)) {
-            c->value = parent.tweak(c->value);
-            return;
-          }
-        }
         // TODO: more minor tweaks to immediates, like making a load atomic or
         // not, changing an offset, etc.
-        // Perform a general replacement. (This is not always valid due to
-        // nesting of labels, but we'll fix that up later.) Note that make()
-        // picks a subtype, so this has a chance to replace us with anything
-        // that is valid to put here.
-        replaceCurrent(parent.make(curr->type));
+        if (auto* c = curr->dynCast<Const>()) {
+          if (mode < 50) {
+            c->value = parent.tweak(c->value);
+          } else {
+            // Just replace the entire thing.
+            replaceCurrent(parent.make(curr->type));
+          }
+          return;
+        }
+
+        // Generate a replacement for the expression, and by default replace all
+        // of |curr| (including children) with that replacement, but in some
+        // cases we can do more subtle things.
+        //
+        // Note that such a replacement is not always valid due to nesting of
+        // labels, but we'll fix that up later. Note also that make() picks a
+        // subtype, so this has a chance to replace us with anything that is
+        // valid to put here.
+        auto* rep = parent.make(curr->type);
+        if (mode < 33 && rep->type != Type::none) {
+          // This has a non-none type. Replace the output, keeping the
+          // expression and its children in a drop. This "interposes" between
+          // this expression and its parent, something like this:
+          //
+          //    (D
+          //      (A
+          //        (B)
+          //        (C)
+          //      )
+          //    )
+          ////
+          //    => ;; keep A, replace it in the parent
+          //
+          //    (D
+          //      (block
+          //        (drop
+          //          (A
+          //            (B)
+          //            (C)
+          //          )
+          //        )
+          //        (NEW)
+          //      )
+          //    )
+          //
+          // We also sometimes try to insert A as a child of NEW, so we actually
+          // interpose directly:
+          //
+          //    (D
+          //      (NEW
+          //        (A
+          //          (B)
+          //          (C)
+          //        )
+          //      )
+          //    )
+          //
+          // We do not do that all the time, as inserting a drop is actually an
+          // important situation to test: the drop makes the output of A unused,
+          // which may let optimizations remove it.
+          if ((mode & 1) && replaceChildWith(rep, curr)) {
+            // We managed to replace one of the children with curr, and have
+            // nothing more to do.
+          } else {
+            // Drop curr and append.
+            rep =
+              parent.builder.makeSequence(parent.builder.makeDrop(curr), rep);
+          }
+        } else if (mode >= 66 && !Properties::isControlFlowStructure(curr)) {
+          ChildIterator children(curr);
+          auto numChildren = children.getNumChildren();
+          if (numChildren > 0 && numChildren < 5) {
+            // This is a normal (non-control-flow) expression with at least one
+            // child (and not an excessive amount of them; see the processing
+            // below). "Interpose" between the children and this expression by
+            // keeping them and replacing the parent |curr|. We do this by
+            // generating drops of the children, like this:
+            //
+            //  (A
+            //    (B)
+            //    (C)
+            //  )
+            //
+            //  => ;; keep children, replace A
+            //
+            //  (block
+            //    (drop (B))
+            //    (drop (C))
+            //    (NEW)
+            //  )
+            //
+            auto* block = parent.builder.makeBlock();
+            for (auto* child : children) {
+              // Only drop the child if we can't replace it as one of NEW's
+              // children. This does a linear scan of |rep| which is the reason
+              // for the above limit on the number of children.
+              if (!replaceChildWith(rep, child)) {
+                block->list.push_back(parent.builder.makeDrop(child));
+              }
+            }
+
+            if (!block->list.empty()) {
+              // We need the block, that is, we did not find a place for all the
+              // children.
+              block->list.push_back(rep);
+              block->finalize();
+              rep = block;
+            }
+          }
+        }
+        replaceCurrent(rep);
       }
     }
   };
-  Modder modder(wasm, *this, percentChance);
-  modder.walk(func->body);
+
+  Modder modder(*this, percentChance);
+  modder.walkFunctionInModule(func, &wasm);
 }
 
 void TranslateToFuzzReader::fixAfterChanges(Function* func) {
@@ -1068,7 +1195,6 @@ void TranslateToFuzzReader::modifyInitialFunctions() {
     if (upTo(RESOLUTION) >= chance) {
       dropToLog(func);
       // TODO add some locals? and the rest of addFunction's operations?
-      // TODO: interposition, replace initial a(b) with a(RANDOM_THING(b))
       // TODO: if we add OOB checks after creation, then we can do it on
       //       initial contents too, and it may be nice to *not* run these
       //       passes, like we don't run them on new functions. But, we may
@@ -1077,6 +1203,10 @@ void TranslateToFuzzReader::modifyInitialFunctions() {
       recombine(func);
       mutate(func);
       fixAfterChanges(func);
+      // TODO: This triad of functions appears in another place as well, and
+      //       could be handled by a single function. That function could also
+      //       decide to reorder recombine and mutate or even run more cycles of
+      //       them.
     }
   }
   // Remove a start function - the fuzzing harness expects code to run only
@@ -1252,7 +1382,6 @@ Expression* TranslateToFuzzReader::_makeConcrete(Type type) {
                   &Self::makeArrayGet);
     }
   }
-  // TODO: struct.get and other GC things
   return (this->*pick(options))(type);
 }
 
@@ -2319,11 +2448,18 @@ Expression* TranslateToFuzzReader::makeRefFuncConst(Type type) {
     // had generic 'func' here.
     heapType = Signature(Type::none, Type::none);
   }
-  // TODO: randomize the order
-  for (auto& func : wasm.functions) {
-    if (Type::isSubType(Type(func->type, NonNullable), type)) {
-      return builder.makeRefFunc(func->name, func->type);
-    }
+  // Look for a proper function starting from a random location, and loop from
+  // there, wrapping around to 0.
+  if (!wasm.functions.empty()) {
+    Index start = upTo(wasm.functions.size());
+    Index i = start;
+    do {
+      auto& func = wasm.functions[i];
+      if (Type::isSubType(Type(func->type, NonNullable), type)) {
+        return builder.makeRefFunc(func->name, func->type);
+      }
+      i = (i + 1) % wasm.functions.size();
+    } while (i != start);
   }
   // We don't have a matching function. Create a null some of the time here,
   // but only rarely if the type is non-nullable (because in that case we'd need
@@ -2393,6 +2529,9 @@ Expression* TranslateToFuzzReader::makeBasicRef(Type type) {
     }
     case HeapType::func: {
       return makeRefFuncConst(type);
+    }
+    case HeapType::cont: {
+      WASM_UNREACHABLE("not implemented");
     }
     case HeapType::any: {
       // Choose a subtype we can materialize a constant for. We cannot
@@ -2465,20 +2604,63 @@ Expression* TranslateToFuzzReader::makeBasicRef(Type type) {
       }
       return null;
     }
-    case HeapType::string:
-      return builder.makeStringConst(std::to_string(upTo(1024)));
-    case HeapType::stringview_wtf8:
-      return builder.makeStringAs(
-        StringAsWTF8, makeBasicRef(Type(HeapType::string, NonNullable)));
+    case HeapType::string: {
+      // Construct an interesting WTF-8 string from parts.
+      std::stringstream wtf8;
+      bool lastWasLeadingSurrogate = false;
+      for (size_t i = 0, end = upTo(4); i < end; ++i) {
+        switch (upTo(6)) {
+          case 0:
+            // A simple ascii string.
+            wtf8 << std::to_string(upTo(1024));
+            break;
+          case 1:
+            // '£'
+            wtf8 << "\xC2\xA3";
+            break;
+          case 2:
+            // '€'
+            wtf8 << "\xE2\x82\xAC";
+            break;
+          case 3:
+            // '𐍈'
+            wtf8 << "\xF0\x90\x8D\x88";
+            break;
+          case 4:
+            // The leading surrogate in '𐍈'
+            wtf8 << "\xED\xA0\x80";
+            lastWasLeadingSurrogate = true;
+            continue;
+          case 5:
+            if (lastWasLeadingSurrogate) {
+              // Avoid invalid WTF-8.
+              continue;
+            }
+            // The trailing surrogate in '𐍈'
+            wtf8 << "\xED\xBD\x88";
+            break;
+        }
+        lastWasLeadingSurrogate = false;
+      }
+      std::stringstream wtf16;
+      // TODO: Use wtf16.view() once we have C++20.
+      String::convertWTF8ToWTF16(wtf16, wtf8.str());
+      return builder.makeStringConst(wtf16.str());
+    }
     case HeapType::stringview_wtf16:
+      // We fully support wtf16 strings.
       return builder.makeStringAs(
         StringAsWTF16, makeBasicRef(Type(HeapType::string, NonNullable)));
+    case HeapType::stringview_wtf8:
     case HeapType::stringview_iter:
-      return builder.makeStringAs(
-        StringAsIter, makeBasicRef(Type(HeapType::string, NonNullable)));
+      // We do not have interpreter support for wtf8 and iter, so emit something
+      // that does not return, with a block that casts to the type the parent
+      // expects.
+      return builder.makeBlock({_makeunreachable()}, type);
     case HeapType::none:
     case HeapType::noext:
     case HeapType::nofunc:
+    case HeapType::nocont:
     case HeapType::noexn: {
       auto null = builder.makeRefNull(heapType);
       if (!type.isNullable()) {
@@ -3504,13 +3686,20 @@ Expression* TranslateToFuzzReader::makeRefCast(Type type) {
   return builder.makeRefCast(make(refType), type);
 }
 
+bool TranslateToFuzzReader::maybeSignedGet(const Field& field) {
+  if (field.isPacked()) {
+    return oneIn(2);
+  }
+  return false;
+}
+
 Expression* TranslateToFuzzReader::makeStructGet(Type type) {
   auto& structFields = typeStructFields[type];
   assert(!structFields.empty());
   auto [structType, fieldIndex] = pick(structFields);
   auto* ref = makeTrappingRefUse(structType);
-  // TODO: fuzz signed and unsigned
-  return builder.makeStructGet(fieldIndex, ref, type);
+  auto signed_ = maybeSignedGet(structType.getStruct().fields[fieldIndex]);
+  return builder.makeStructGet(fieldIndex, ref, type, signed_);
 }
 
 Expression* TranslateToFuzzReader::makeStructSet(Type type) {
@@ -3575,18 +3764,18 @@ Expression* TranslateToFuzzReader::makeArrayGet(Type type) {
   auto arrayType = pick(arrays);
   auto* ref = makeTrappingRefUse(arrayType);
   auto* index = make(Type::i32);
+  auto signed_ = maybeSignedGet(arrayType.getArray().element);
   // Only rarely emit a plain get which might trap. See related logic in
   // ::makePointer().
   if (allowOOB && oneIn(10)) {
-    // TODO: fuzz signed and unsigned, and also below
-    return builder.makeArrayGet(ref, index, type);
+    return builder.makeArrayGet(ref, index, type, signed_);
   }
   // To avoid a trap, check the length dynamically using this pattern:
   //
   //   index < array.len ? array[index] : ..some fallback value..
   //
   auto check = makeArrayBoundsCheck(ref, index, funcContext->func, builder);
-  auto* get = builder.makeArrayGet(check.getRef, check.getIndex, type);
+  auto* get = builder.makeArrayGet(check.getRef, check.getIndex, type, signed_);
   auto* fallback = makeTrivial(type);
   return builder.makeIf(check.condition, get, fallback);
 }
@@ -3604,7 +3793,6 @@ Expression* TranslateToFuzzReader::makeArraySet(Type type) {
   // Only rarely emit a plain get which might trap. See related logic in
   // ::makePointer().
   if (allowOOB && oneIn(10)) {
-    // TODO: fuzz signed and unsigned, and also below
     return builder.makeArraySet(ref, index, value);
   }
   // To avoid a trap, check the length dynamically using this pattern:
@@ -3632,7 +3820,6 @@ Expression* TranslateToFuzzReader::makeArrayBulkMemoryOp(Type type) {
     // Only rarely emit a plain get which might trap. See related logic in
     // ::makePointer().
     if (allowOOB && oneIn(10)) {
-      // TODO: fuzz signed and unsigned, and also below
       return builder.makeArrayFill(ref, index, value, length);
     }
     auto check =
@@ -3657,7 +3844,6 @@ Expression* TranslateToFuzzReader::makeArrayBulkMemoryOp(Type type) {
     auto* srcRef = makeTrappingRefUse(srcArrayType);
     auto* length = make(Type::i32);
     if (allowOOB && oneIn(10)) {
-      // TODO: fuzz signed and unsigned, and also below
       return builder.makeArrayCopy(ref, index, srcRef, srcIndex, length);
     }
     auto check =
@@ -3903,6 +4089,8 @@ HeapType TranslateToFuzzReader::getSubType(HeapType type) {
         return pick(FeatureOptions<HeapType>()
                       .add(FeatureSet::ReferenceTypes, HeapType::func)
                       .add(FeatureSet::GC, HeapType::nofunc));
+      case HeapType::cont:
+        return pick(HeapType::cont, HeapType::nocont);
       case HeapType::ext:
         return pick(FeatureOptions<HeapType>()
                       .add(FeatureSet::ReferenceTypes, HeapType::ext)
@@ -3935,12 +4123,15 @@ HeapType TranslateToFuzzReader::getSubType(HeapType type) {
       case HeapType::string:
         return HeapType::string;
       case HeapType::stringview_wtf8:
+        return HeapType::stringview_wtf8;
       case HeapType::stringview_wtf16:
+        return HeapType::stringview_wtf16;
       case HeapType::stringview_iter:
-        WASM_UNREACHABLE("TODO: fuzz strings");
+        return HeapType::stringview_iter;
       case HeapType::none:
       case HeapType::noext:
       case HeapType::nofunc:
+      case HeapType::nocont:
       case HeapType::noexn:
         break;
     }

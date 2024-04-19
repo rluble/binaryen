@@ -331,11 +331,8 @@ INITIAL_CONTENTS_IGNORE = [
     'typed_continuations_suspend.wast',
     # New EH implementation is in progress
     'exception-handling.wast',
-    'translate-eh-old-to-new.wast',
+    'translate-to-new-eh.wast',
     'rse-eh.wast',
-    # Non-UTF8 strings trap in V8, and have limitations in our interpreter
-    'string-lowering.wast',
-    'precompute-strings.wast',
 ]
 
 
@@ -635,12 +632,12 @@ ignored_vm_run_reasons = dict()
 
 # Notes a VM run that we ignore, and the reason for it (for metrics purposes).
 # Extra text can also be printed that is not included in the metrics.
-def note_ignored_vm_run(reason, extra_text=''):
+def note_ignored_vm_run(reason, extra_text='', amount=1):
     global ignored_vm_runs
     print(f'(ignore VM run: {reason}{extra_text})')
-    ignored_vm_runs += 1
+    ignored_vm_runs += amount
     ignored_vm_run_reasons.setdefault(reason, 0)
-    ignored_vm_run_reasons[reason] += 1
+    ignored_vm_run_reasons[reason] += amount
 
 
 def run_vm(cmd):
@@ -787,7 +784,15 @@ class CompareVMs(TestCaseHandler):
                         # still be useful testing here (up to 50%), so we only
                         # note that this is a mostly-ignored run, but we do not
                         # ignore the parts that are useful.
-                        note_ignored_vm_run('too many errors vs calls', extra_text=f' ({calls} calls, {errors} errors)')
+                        #
+                        # Note that we set amount to 0.5 because we are run both
+                        # on the before wasm and the after wasm. Those will be
+                        # in sync (because the optimizer does not remove traps)
+                        # and so by setting 0.5 we only increment by 1 for the
+                        # entire iteration.
+                        note_ignored_vm_run('too many errors vs calls',
+                                            extra_text=f' ({calls} calls, {errors} errors)',
+                                            amount=0.5)
                 return output
 
             def can_run(self, wasm):
@@ -942,29 +947,38 @@ class CompareVMs(TestCaseHandler):
 
     def handle_pair(self, input, before_wasm, after_wasm, opts):
         global ignored_vm_runs
-        ignored_before = ignored_vm_runs
 
         before = self.run_vms(before_wasm)
-
-        # if the binaryen interpreter hit a host limitation on the original
-        # testcase, or for some other reason we need to ignore this, then stop
-        # (otherwise, a host limitation on say allocations may be hit in the
-        # 'before' but not in the 'after' as optimizations may remove it).
-        if before[self.bynterpreter] == IGNORE:
-            # the ignoring should have been noted during run_vms()
-            assert(ignored_vm_runs > ignored_before)
-            return
 
         after = self.run_vms(after_wasm)
         self.compare_before_and_after(before, after)
 
     def run_vms(self, wasm):
+        ignored_before = ignored_vm_runs
+
         # vm_results will map vms to their results
         vm_results = {}
         for vm in self.vms:
             if vm.can_run(wasm):
                 print(f'[CompareVMs] running {vm.name}')
                 vm_results[vm] = fix_output(vm.run(wasm))
+
+                # If the binaryen interpreter hit a host limitation then do not
+                # run other VMs, as that is risky: the host limitation may be an
+                # an OOM which could be very costly (lots of swapping, and the
+                # OOM may change after opts that remove allocations etc.), or it
+                # might be an atomic wait which other VMs implement fully (and
+                # the wait might be very long). In general host limitations
+                # should be rare (which can be verified by looking at the
+                # details of how many things we ended up ignoring), and when we
+                # see one we are in a situation that we can't fuzz properly.
+                if vm == self.bynterpreter and vm_results[vm] == IGNORE:
+                    print('(ignored, so not running other VMs)')
+
+                    # the ignoring should have been noted during run_vms()
+                    assert(ignored_vm_runs > ignored_before)
+
+                    return vm_results
 
         # compare between the vms on this specific input
         first_vm = None

@@ -1181,6 +1181,7 @@ void SExpressionWasmBuilder::parseFunction(Element& s, bool preParseImport) {
   // make a new function
   currFunction = std::unique_ptr<Function>(
     Builder(wasm).makeFunction(name, std::move(params), type, std::move(vars)));
+  currFunction->hasExplicitName = hasExplicitName;
   currFunction->profile = profile;
 
   // parse body
@@ -1257,6 +1258,9 @@ Type SExpressionWasmBuilder::stringToType(std::string_view str,
   if (str.substr(0, 7) == "funcref" && (prefix || str.size() == 7)) {
     return Type(HeapType::func, Nullable);
   }
+  if (str.substr(0, 7) == "contref" && (prefix || str.size() == 7)) {
+    return Type(HeapType::cont, Nullable);
+  }
   if (str.substr(0, 9) == "externref" && (prefix || str.size() == 9)) {
     return Type(HeapType::ext, Nullable);
   }
@@ -1302,6 +1306,9 @@ Type SExpressionWasmBuilder::stringToType(std::string_view str,
   if (str.substr(0, 10) == "nullexnref" && (prefix || str.size() == 10)) {
     return Type(HeapType::noexn, Nullable);
   }
+  if (str.substr(0, 11) == "nullcontref" && (prefix || str.size() == 11)) {
+    return Type(HeapType::nocont, Nullable);
+  }
   if (allowError) {
     return Type::none;
   }
@@ -1313,6 +1320,9 @@ HeapType SExpressionWasmBuilder::stringToHeapType(std::string_view str,
                                                   bool prefix) {
   if (str.substr(0, 4) == "func" && (prefix || str.size() == 4)) {
     return HeapType::func;
+  }
+  if (str.substr(0, 4) == "cont" && (prefix || str.size() == 4)) {
+    return HeapType::cont;
   }
   if (str.substr(0, 2) == "eq" && (prefix || str.size() == 2)) {
     return HeapType::eq;
@@ -1361,6 +1371,9 @@ HeapType SExpressionWasmBuilder::stringToHeapType(std::string_view str,
   }
   if (str.substr(0, 5) == "noexn" && (prefix || str.size() == 5)) {
     return HeapType::noexn;
+  }
+  if (str.substr(0, 6) == "nocont" && (prefix || str.size() == 6)) {
+    return HeapType::nocont;
   }
   throw ParseException(std::string("invalid wasm heap type: ") +
                        std::string(str.data(), str.size()));
@@ -3335,7 +3348,13 @@ Expression* SExpressionWasmBuilder::makeStringConst(Element& s) {
   std::vector<char> data;
   stringToBinary(*s[1], s[1]->str().str, data);
   Name str = std::string_view(data.data(), data.size());
-  return Builder(wasm).makeStringConst(str);
+  // Re-encode from WTF-8 to WTF-16.
+  std::stringstream wtf16;
+  if (!String::convertWTF8ToWTF16(wtf16, str.str)) {
+    throw SParseException("invalid string constant", s);
+  }
+  // TODO: Use wtf16.view() once we have C++20.
+  return Builder(wasm).makeStringConst(wtf16.str());
 }
 
 Expression* SExpressionWasmBuilder::makeStringMeasure(Element& s,
@@ -3603,7 +3622,9 @@ void SExpressionWasmBuilder::parseInnerData(Element& s,
 
 void SExpressionWasmBuilder::parseExport(Element& s) {
   std::unique_ptr<Export> ex = std::make_unique<Export>();
-  ex->name = s[1]->str();
+  std::vector<char> nameBytes;
+  stringToBinary(*s[1], s[1]->str().str, nameBytes);
+  ex->name = std::string(nameBytes.data(), nameBytes.size());
   if (s[2]->isList()) {
     auto& inner = *s[2];
     if (elementStartsWith(inner, FUNC)) {
@@ -3684,15 +3705,20 @@ void SExpressionWasmBuilder::parseImport(Element& s) {
   if (!newStyle) {
     kind = ExternalKind::Function;
   }
-  auto module = s[i++]->str();
+  std::vector<char> moduleBytes;
+  stringToBinary(*s[i], s[i]->str().str, moduleBytes);
+  Name module = std::string(moduleBytes.data(), moduleBytes.size());
+  i++;
+
   if (!s[i]->isStr()) {
     throw SParseException("no name for import", s, *s[i]);
   }
-  auto base = s[i]->str();
-  if (!module.size() || !base.size()) {
-    throw SParseException("imports must have module and base", s, *s[i]);
-  }
+
+  std::vector<char> baseBytes;
+  stringToBinary(*s[i], s[i]->str().str, baseBytes);
+  Name base = std::string(baseBytes.data(), baseBytes.size());
   i++;
+
   // parse internals
   Element& inner = newStyle ? *s[3] : s;
   Index j = newStyle ? newStyleInner : i;
@@ -3731,10 +3757,13 @@ void SExpressionWasmBuilder::parseImport(Element& s) {
       table->max = Table::kUnlimitedSize;
     }
 
-    wasm.addTable(std::move(table));
-
-    j++; // funcref
     // ends with the table element type
+    table->type = elementToType(*inner[j++]);
+    if (!table->type.isRef()) {
+      throw SParseException("Only reference types are valid for tables", s);
+    }
+
+    wasm.addTable(std::move(table));
   } else if (kind == ExternalKind::Memory) {
     auto memory = std::make_unique<Memory>();
     memory->setName(name, hasExplicitName);

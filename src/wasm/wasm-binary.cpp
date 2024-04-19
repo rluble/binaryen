@@ -23,6 +23,7 @@
 #include "ir/type-updating.h"
 #include "support/bits.h"
 #include "support/debug.h"
+#include "support/string.h"
 #include "wasm-binary.h"
 #include "wasm-debug.h"
 #include "wasm-stack.h"
@@ -527,7 +528,12 @@ void WasmBinaryWriter::writeStrings() {
   // The number of strings and then their contents.
   o << U32LEB(num);
   for (auto& string : sorted) {
-    writeInlineString(string.str);
+    // Re-encode from WTF-16 to WTF-8.
+    std::stringstream wtf8;
+    [[maybe_unused]] bool valid = String::convertWTF16ToWTF8(wtf8, string.str);
+    assert(valid);
+    // TODO: Use wtf8.view() once we have C++20.
+    writeInlineString(wtf8.str());
   }
 
   finishSection(start);
@@ -858,19 +864,27 @@ void WasmBinaryWriter::writeNames() {
 
   // function names
   {
-    auto substart =
-      startSubsection(BinaryConsts::CustomSections::Subsection::NameFunction);
-    o << U32LEB(indexes.functionIndexes.size());
-    Index emitted = 0;
-    auto add = [&](Function* curr) {
-      o << U32LEB(emitted);
-      writeEscapedName(curr->name.str);
-      emitted++;
+    std::vector<std::pair<Index, Function*>> functionsWithNames;
+    Index checked = 0;
+    auto check = [&](Function* curr) {
+      if (curr->hasExplicitName) {
+        functionsWithNames.push_back({checked, curr});
+      }
+      checked++;
     };
-    ModuleUtils::iterImportedFunctions(*wasm, add);
-    ModuleUtils::iterDefinedFunctions(*wasm, add);
-    assert(emitted == indexes.functionIndexes.size());
-    finishSubsection(substart);
+    ModuleUtils::iterImportedFunctions(*wasm, check);
+    ModuleUtils::iterDefinedFunctions(*wasm, check);
+    assert(checked == indexes.functionIndexes.size());
+    if (functionsWithNames.size() > 0) {
+      auto substart =
+        startSubsection(BinaryConsts::CustomSections::Subsection::NameFunction);
+      o << U32LEB(functionsWithNames.size());
+      for (auto& [index, global] : functionsWithNames) {
+        o << U32LEB(index);
+        writeEscapedName(global->name.str);
+      }
+      finishSubsection(substart);
+    }
   }
 
   // local names
@@ -1061,7 +1075,7 @@ void WasmBinaryWriter::writeNames() {
   }
 
   // data segment names
-  if (!wasm->memories.empty()) {
+  {
     Index count = 0;
     for (auto& seg : wasm->dataSegments) {
       if (seg->hasExplicitName) {
@@ -1075,7 +1089,7 @@ void WasmBinaryWriter::writeNames() {
       o << U32LEB(count);
       for (Index i = 0; i < wasm->dataSegments.size(); i++) {
         auto& seg = wasm->dataSegments[i];
-        if (seg->name.is()) {
+        if (seg->hasExplicitName) {
           o << U32LEB(i);
           writeEscapedName(seg->name.str);
         }
@@ -1494,6 +1508,9 @@ void WasmBinaryWriter::writeType(Type type) {
         case HeapType::func:
           o << S32LEB(BinaryConsts::EncodedType::funcref);
           return;
+        case HeapType::cont:
+          o << S32LEB(BinaryConsts::EncodedType::contref);
+          return;
         case HeapType::eq:
           o << S32LEB(BinaryConsts::EncodedType::eqref);
           return;
@@ -1532,6 +1549,9 @@ void WasmBinaryWriter::writeType(Type type) {
           return;
         case HeapType::noexn:
           o << S32LEB(BinaryConsts::EncodedType::nullexnref);
+          return;
+        case HeapType::nocont:
+          o << S32LEB(BinaryConsts::EncodedType::nullcontref);
           return;
       }
     }
@@ -1606,6 +1626,9 @@ void WasmBinaryWriter::writeHeapType(HeapType type) {
     case HeapType::func:
       ret = BinaryConsts::EncodedHeapType::func;
       break;
+    case HeapType::cont:
+      ret = BinaryConsts::EncodedHeapType::cont;
+      break;
     case HeapType::any:
       ret = BinaryConsts::EncodedHeapType::any;
       break;
@@ -1647,6 +1670,9 @@ void WasmBinaryWriter::writeHeapType(HeapType type) {
       break;
     case HeapType::noexn:
       ret = BinaryConsts::EncodedHeapType::noexn;
+      break;
+    case HeapType::nocont:
+      ret = BinaryConsts::EncodedHeapType::nocont;
       break;
   }
   o << S64LEB(ret); // TODO: Actually s33
@@ -1980,6 +2006,9 @@ bool WasmBinaryReader::getBasicType(int32_t code, Type& out) {
     case BinaryConsts::EncodedType::funcref:
       out = Type(HeapType::func, Nullable);
       return true;
+    case BinaryConsts::EncodedType::contref:
+      out = Type(HeapType::cont, Nullable);
+      return true;
     case BinaryConsts::EncodedType::externref:
       out = Type(HeapType::ext, Nullable);
       return true;
@@ -2025,6 +2054,9 @@ bool WasmBinaryReader::getBasicType(int32_t code, Type& out) {
     case BinaryConsts::EncodedType::nullexnref:
       out = Type(HeapType::noexn, Nullable);
       return true;
+    case BinaryConsts::EncodedType::nullcontref:
+      out = Type(HeapType::nocont, Nullable);
+      return true;
     default:
       return false;
   }
@@ -2033,6 +2065,9 @@ bool WasmBinaryReader::getBasicType(int32_t code, Type& out) {
 bool WasmBinaryReader::getBasicHeapType(int64_t code, HeapType& out) {
   switch (code) {
     case BinaryConsts::EncodedHeapType::func:
+      out = HeapType::func;
+      return true;
+    case BinaryConsts::EncodedHeapType::cont:
       out = HeapType::func;
       return true;
     case BinaryConsts::EncodedHeapType::ext:
@@ -2079,6 +2114,9 @@ bool WasmBinaryReader::getBasicHeapType(int64_t code, HeapType& out) {
       return true;
     case BinaryConsts::EncodedHeapType::noexn:
       out = HeapType::noexn;
+      return true;
+    case BinaryConsts::EncodedHeapType::nocont:
+      out = HeapType::nocont;
       return true;
     default:
       return false;
@@ -2960,7 +2998,13 @@ void WasmBinaryReader::readStrings() {
   size_t num = getU32LEB();
   for (size_t i = 0; i < num; i++) {
     auto string = getInlineString();
-    strings.push_back(string);
+    // Re-encode from WTF-8 to WTF-16.
+    std::stringstream wtf16;
+    if (!String::convertWTF8ToWTF16(wtf16, string.str)) {
+      throwError("invalid string constant");
+    }
+    // TODO: Use wtf16.view() once we have C++20.
+    strings.push_back(wtf16.str());
   }
 }
 

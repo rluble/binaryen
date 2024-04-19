@@ -147,8 +147,14 @@ struct StringGathering : public Pass {
       }
 
       auto& string = strings[i];
+      // Re-encode from WTF-16 to WTF-8 to make the name easier to read.
+      std::stringstream wtf8;
+      [[maybe_unused]] bool valid =
+        String::convertWTF16ToWTF8(wtf8, string.str);
+      assert(valid);
+      // TODO: Use wtf8.view() once we have C++20.
       auto name = Names::getValidGlobalName(
-        *module, std::string("string.const_") + std::string(string.str));
+        *module, std::string("string.const_") + std::string(wtf8.str()));
       globalName = name;
       newNames.insert(name);
       auto* stringConst = builder.makeStringConst(string);
@@ -183,6 +189,13 @@ struct StringGathering : public Pass {
 };
 
 struct StringLowering : public StringGathering {
+  // If true, then encode well-formed strings as (import "'" "string...")
+  // instead of emitting them into the JSON custom section.
+  bool useMagicImports;
+
+  StringLowering(bool useMagicImports = false)
+    : useMagicImports(useMagicImports) {}
+
   void run(Module* module) override {
     if (!module->features.has(FeatureSet::Strings)) {
       return;
@@ -211,25 +224,30 @@ struct StringLowering : public StringGathering {
   }
 
   void makeImports(Module* module) {
-    Index importIndex = 0;
+    Index jsonImportIndex = 0;
     std::stringstream json;
     json << '[';
     bool first = true;
-    std::vector<Name> importedStrings;
     for (auto& global : module->globals) {
       if (global->init) {
         if (auto* c = global->init->dynCast<StringConst>()) {
-          global->module = "string.const";
-          global->base = std::to_string(importIndex);
-          importIndex++;
-          global->init = nullptr;
-
-          if (first) {
-            first = false;
+          std::stringstream utf8;
+          if (useMagicImports &&
+              String::convertUTF16ToUTF8(utf8, c->string.str)) {
+            global->module = "'";
+            global->base = Name(utf8.str());
           } else {
-            json << ',';
+            global->module = "string.const";
+            global->base = std::to_string(jsonImportIndex);
+            if (first) {
+              first = false;
+            } else {
+              json << ',';
+            }
+            String::printEscapedJSON(json, c->string.str);
+            jsonImportIndex++;
           }
-          String::printEscapedJSON(json, c->string.str);
+          global->init = nullptr;
         }
       }
     }
@@ -292,6 +310,7 @@ struct StringLowering : public StringGathering {
   Name fromCharCodeArrayImport;
   Name intoCharCodeArrayImport;
   Name fromCodePointImport;
+  Name concatImport;
   Name equalsImport;
   Name compareImport;
   Name lengthImport;
@@ -322,6 +341,8 @@ struct StringLowering : public StringGathering {
       module, "fromCharCodeArray", {nullArray16, Type::i32, Type::i32}, nnExt);
     // string.fromCodePoint: codepoint -> ext
     fromCodePointImport = addImport(module, "fromCodePoint", Type::i32, nnExt);
+    // string.concat: string, string -> string
+    concatImport = addImport(module, "concat", {nullExt, nullExt}, nnExt);
     // string.intoCharCodeArray: string, array, start -> num written
     intoCharCodeArrayImport = addImport(module,
                                         "intoCharCodeArray",
@@ -367,6 +388,12 @@ struct StringLowering : public StringGathering {
           default:
             WASM_UNREACHABLE("TODO: all of string.new*");
         }
+      }
+
+      void visitStringConcat(StringConcat* curr) {
+        Builder builder(*getModule());
+        replaceCurrent(builder.makeCall(
+          lowering.concatImport, {curr->left, curr->right}, lowering.nnExt));
       }
 
       void visitStringAs(StringAs* curr) {
@@ -501,5 +528,6 @@ struct StringLowering : public StringGathering {
 
 Pass* createStringGatheringPass() { return new StringGathering(); }
 Pass* createStringLoweringPass() { return new StringLowering(); }
+Pass* createStringLoweringMagicImportPass() { return new StringLowering(true); }
 
 } // namespace wasm

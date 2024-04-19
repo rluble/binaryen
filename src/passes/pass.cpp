@@ -217,10 +217,6 @@ void PassRegistry::registerPasses() {
   registerPass("legalize-js-interface",
                "legalizes i64 types on the import/export boundary",
                createLegalizeJSInterfacePass);
-  registerPass("legalize-js-interface-minimally",
-               "legalizes i64 types on the import/export boundary in a minimal "
-               "manner, only on things only JS will call",
-               createLegalizeJSInterfaceMinimallyPass);
   registerPass("legalize-and-prune-js-interface",
                "legalizes the import/export boundary and prunes when needed",
                createLegalizeAndPruneJSInterfacePass);
@@ -487,6 +483,10 @@ void PassRegistry::registerPasses() {
   registerPass("string-lowering",
                "lowers wasm strings and operations to imports",
                createStringLoweringPass);
+  registerPass(
+    "string-lowering-magic-imports",
+    "same as string-lowering, but encodes well-formed strings as magic imports",
+    createStringLoweringMagicImportPass);
   registerPass(
     "strip", "deprecated; same as strip-debug", createStripDebugPass);
   registerPass("stack-check",
