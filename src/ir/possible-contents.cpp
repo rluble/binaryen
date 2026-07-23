@@ -1161,11 +1161,12 @@ struct InfoCollector
       curr->ref, curr->index, curr->value, MemoryOrder::Unordered);
     visitArraySet(set);
   }
-  template<typename ArrayInit> void visitArrayInit(ArrayInit* curr) {
+
+  void handleArrayWrite(Expression* ref) {
     // Check for both unreachability and a bottom type. In either case we have
     // no work to do, and would error on an assertion below in finding the array
     // type.
-    auto field = GCTypeUtils::getField(curr->ref->type);
+    auto field = GCTypeUtils::getField(ref->type);
     if (!field) {
       return;
     }
@@ -1179,12 +1180,14 @@ struct InfoCollector
     Builder builder(*getModule());
     auto* get = builder.makeLocalGet(-1, valueType);
     addRoot(get);
-    auto* set =
-      builder.makeArraySet(curr->ref, curr->index, get, MemoryOrder::Unordered);
+    // The index does not matter, as we do not track array indexes yet TODO
+    Expression* index = builder.makeNop();
+    auto* set = builder.makeArraySet(ref, index, get, MemoryOrder::Unordered);
     visitArraySet(set);
   }
-  void visitArrayInitData(ArrayInitData* curr) { visitArrayInit(curr); }
-  void visitArrayInitElem(ArrayInitElem* curr) { visitArrayInit(curr); }
+
+  void visitArrayInitData(ArrayInitData* curr) { handleArrayWrite(curr->ref); }
+  void visitArrayInitElem(ArrayInitElem* curr) { handleArrayWrite(curr->ref); }
   void visitArrayRMW(ArrayRMW* curr) {
     if (curr->ref->type == Type::unreachable) {
       return;
@@ -1219,6 +1222,7 @@ struct InfoCollector
   }
   void visitStringEncode(StringEncode* curr) {
     // TODO: optimize when possible
+    handleArrayWrite(curr->array);
     addRoot(curr);
   }
   void visitStringConcat(StringConcat* curr) {
@@ -1861,7 +1865,7 @@ void TNHOracle::infer() {
 
     auto ensureCFG = [&]() {
       if (!blockIndexes) {
-        auto cfg = analysis::CFG::fromFunction(func);
+        auto cfg = analysis::CFG::fromFunction(func, &wasm);
         blockIndexes = analysis::CFGBlockIndexes(cfg);
       }
     };
@@ -2551,6 +2555,12 @@ Flower::Flower(Module& wasm, const PassOptions& options)
       } else if (type.isArray()) {
         roots[getIndex(DataLocation{type, 0})] =
           PossibleContents::fromType(type.getArray().element.type);
+      } else if (type.isSignature()) {
+        auto sig = type.getSignature();
+        for (Index i = 0; i < sig.results.size(); i++) {
+          roots[getIndex(SignatureResultLocation{type, i})] =
+            PossibleContents::fromType(sig.results[i]);
+        }
       }
     }
   }

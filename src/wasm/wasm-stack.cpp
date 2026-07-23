@@ -329,8 +329,11 @@ void BinaryInstWriter::visitLocalSet(LocalSet* curr) {
     o << static_cast<int8_t>(BinaryConsts::LocalSet)
       << U32LEB(mappedLocals[std::make_pair(curr->index, i)]);
   }
-  if (!curr->isTee()) {
-    // This is not a tee, so just finish setting the values.
+  if (!curr->isTee() || curr->type == Type::unreachable) {
+    // This is not a tee or it is unreachable, so just finish setting the
+    // values. We emit unreachable sets as sets rather than tees to avoid
+    // pushing concrete types (which may not be correct for the next
+    // instruction) onto polymorphic stacks.
     o << static_cast<int8_t>(BinaryConsts::LocalSet)
       << U32LEB(mappedLocals[std::make_pair(curr->index, 0)]);
   } else if (auto it = extractedGets.find(curr); it != extractedGets.end()) {
@@ -629,8 +632,9 @@ void BinaryInstWriter::visitAtomicNotify(AtomicNotify* curr) {
 
 void BinaryInstWriter::visitAtomicFence(AtomicFence* curr) {
   o << static_cast<int8_t>(BinaryConsts::AtomicPrefix)
-    << static_cast<int8_t>(BinaryConsts::AtomicFence)
-    << static_cast<int8_t>(curr->order);
+    << static_cast<int8_t>(BinaryConsts::AtomicFence);
+
+  parent.writeMemoryOrder(curr->order);
 }
 
 void BinaryInstWriter::visitPause(Pause* curr) {
@@ -2824,24 +2828,34 @@ void BinaryInstWriter::visitArraySet(ArraySet* curr) {
 }
 
 void BinaryInstWriter::visitArrayLoad(ArrayLoad* curr) {
+  if (curr->type == Type::unreachable) {
+    return;
+  }
   if (curr->ref->type.isNull()) {
     emitUnreachable();
     return;
   }
   emitLoadOpcode(curr->bytes, curr->signed_, curr->type);
-  uint32_t alignmentBits = BinaryConsts::HasBackingArrayMask;
+  uint32_t alignmentBits =
+    Bits::log2(curr->align) | BinaryConsts::HasBackingArrayMask;
   o << U32LEB(alignmentBits);
+  o << U32LEB(curr->offset);
   parent.writeIndexedHeapType(curr->ref->type.getHeapType());
 }
 
 void BinaryInstWriter::visitArrayStore(ArrayStore* curr) {
+  if (curr->type == Type::unreachable) {
+    return;
+  }
   if (curr->ref->type.isNull()) {
     emitUnreachable();
     return;
   }
   emitStoreOpcode(curr->bytes, curr->value->type);
-  uint32_t alignmentBits = BinaryConsts::HasBackingArrayMask;
+  uint32_t alignmentBits =
+    Bits::log2(curr->align) | BinaryConsts::HasBackingArrayMask;
   o << U32LEB(alignmentBits);
+  o << U32LEB(curr->offset);
   parent.writeIndexedHeapType(curr->ref->type.getHeapType());
 }
 
@@ -3194,6 +3208,14 @@ void BinaryInstWriter::emitFunctionEnd() {
 
 void BinaryInstWriter::emitUnreachable() {
   o << static_cast<int8_t>(BinaryConsts::Unreachable);
+}
+
+void BinaryInstWriter::emitUnreachableLocalSet(Index index) {
+  LocalSet set;
+  set.index = index;
+  set.type = Type::none;
+  set.value = nullptr;
+  visitLocalSet(&set);
 }
 
 void BinaryInstWriter::mapLocalsAndEmitHeader() {
@@ -3582,6 +3604,13 @@ public:
   void emitFunctionEnd() {}
   void emitUnreachable() {
     stackIR.push_back(makeStackInst(Builder(module).makeUnreachable()));
+  }
+  void emitUnreachableLocalSet(Index i) {
+    Builder builder(module);
+    auto unreachable = builder.makeUnreachable();
+    auto set = builder.makeLocalSet(i, unreachable);
+    emit(unreachable);
+    emit(set);
   }
   void emitDebugLocation(Expression* curr) {}
 

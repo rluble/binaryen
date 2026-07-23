@@ -80,6 +80,7 @@ const char* RelaxedAtomicsFeature = "relaxed-atomics";
 const char* MultibyteFeature = "multibyte";
 const char* CustomPageSizesFeature = "custom-page-sizes";
 const char* WideArithmeticFeature = "wide-arithmetic";
+const char* CompactImportsFeature = "compact-imports";
 
 } // namespace BinaryConsts::CustomSections
 
@@ -90,10 +91,10 @@ const Name InlineHint = "metadata.code.inline";
 const Name RemovableIfUnusedHint = "binaryen.removable.if.unused";
 const Name JSCalledHint = "binaryen.js.called";
 const Name IdempotentHint = "binaryen.idempotent";
+const Name ToolchainInlineHint = "binaryen.inline";
 
 } // namespace Annotations
 
-Name STACK_POINTER("__stack_pointer");
 Name MODULE("module");
 Name START("start");
 Name GLOBAL("global");
@@ -118,17 +119,11 @@ Name NULL_("null");
 Name CALL("call");
 Name CALL_INDIRECT("call_indirect");
 Name BLOCK("block");
-Name BR_IF("br_if");
 Name THEN("then");
 Name ELSE("else");
-Name _NAN("NaN");
-Name _INFINITY("Infinity");
-Name NEG_INFINITY("-infinity");
-Name NEG_NAN("-nan");
 Name CASE("case");
 Name BR("br");
 Name FUNCREF("funcref");
-Name FAKE_RETURN("__binaryen_fake_return");
 Name DELEGATE_CALLER_TARGET("__binaryen_delegate_caller_target");
 Name MUT("mut");
 Name SPECTEST("spectest");
@@ -810,8 +805,7 @@ void WideIntAddSub::finalize() {
       rightHigh->type == Type::unreachable) {
     type = Type::unreachable;
   } else {
-    static Type i64Pair = Types::getI64Pair();
-    type = i64Pair;
+    type = Types::getI64Pair();
   }
 }
 
@@ -819,8 +813,7 @@ void WideIntMul::finalize() {
   if (left->type == Type::unreachable || right->type == Type::unreachable) {
     type = Type::unreachable;
   } else {
-    static Type i64Pair = Types::getI64Pair();
-    type = i64Pair;
+    type = Types::getI64Pair();
   }
 }
 

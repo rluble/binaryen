@@ -511,6 +511,9 @@ BinaryenFeatures BinaryenFeatureCustomPageSizes(void) {
 BinaryenFeatures BinaryenFeatureWideArithmetic(void) {
   return static_cast<BinaryenFeatures>(FeatureSet::WideArithmetic);
 }
+BinaryenFeatures BinaryenFeatureCompactImports(void) {
+  return static_cast<BinaryenFeatures>(FeatureSet::CompactImports);
+}
 BinaryenFeatures BinaryenFeatureAll(void) {
   return static_cast<BinaryenFeatures>(FeatureSet::All);
 }
@@ -1497,8 +1500,10 @@ BinaryenExpressionRef BinaryenAtomicNotify(BinaryenModuleRef module,
                         0,
                         getMemoryName(module, memoryName)));
 }
-BinaryenExpressionRef BinaryenAtomicFence(BinaryenModuleRef module) {
-  return static_cast<Expression*>(Builder(*(Module*)module).makeAtomicFence());
+BinaryenExpressionRef BinaryenAtomicFence(BinaryenModuleRef module,
+                                          BinaryenMemoryOrder order) {
+  return Builder(*(Module*)module)
+    .makeAtomicFence(static_cast<MemoryOrder>(order));
 }
 BinaryenExpressionRef BinaryenSIMDExtract(BinaryenModuleRef module,
                                           BinaryenOp op,
@@ -2076,6 +2081,20 @@ void BinaryenExpressionFinalize(BinaryenExpressionRef expr) {
 BinaryenExpressionRef BinaryenExpressionCopy(BinaryenExpressionRef expr,
                                              BinaryenModuleRef module) {
   return ExpressionManipulator::copy(expr, *(Module*)module);
+}
+char* BinaryenExpressionAllocateAndWriteText(BinaryenExpressionRef expr) {
+  std::ostringstream os;
+  bool colors = Colors::isEnabled();
+
+  Colors::setEnabled(false); // do not use colors for writing
+  os << *(Expression*)expr;
+  Colors::setEnabled(colors); // restore colors state
+
+  auto str = os.str();
+  const size_t len = str.length() + 1;
+  char* output = (char*)malloc(len);
+  std::copy_n(str.c_str(), len, output);
+  return output;
 }
 
 // Specific expression utility
@@ -3364,15 +3383,18 @@ void BinaryenAtomicNotifySetNotifyCount(BinaryenExpressionRef expr,
     (Expression*)notifyCountExpr;
 }
 // AtomicFence
-uint8_t BinaryenAtomicFenceGetOrder(BinaryenExpressionRef expr) {
+BinaryenMemoryOrder BinaryenAtomicFenceGetOrder(BinaryenExpressionRef expr) {
   auto* expression = (Expression*)expr;
   assert(expression->is<AtomicFence>());
-  return static_cast<AtomicFence*>(expression)->order;
+  return static_cast<BinaryenMemoryOrder>(
+    static_cast<AtomicFence*>(expression)->order);
 }
-void BinaryenAtomicFenceSetOrder(BinaryenExpressionRef expr, uint8_t order) {
+void BinaryenAtomicFenceSetOrder(BinaryenExpressionRef expr,
+                                 BinaryenMemoryOrder order) {
   auto* expression = (Expression*)expr;
   assert(expression->is<AtomicFence>());
-  static_cast<AtomicFence*>(expression)->order = order;
+  static_cast<AtomicFence*>(expression)->order =
+    static_cast<MemoryOrder>(order);
 }
 // SIMDExtract
 BinaryenOp BinaryenSIMDExtractGetOp(BinaryenExpressionRef expr) {
@@ -5819,7 +5841,13 @@ void BinaryenModuleSetFeatures(BinaryenModuleRef module,
 //
 
 BinaryenModuleRef BinaryenModuleParse(const char* text) {
+  return BinaryenModuleParseWithFeatures(text, BinaryenFeatureMVP());
+}
+
+BinaryenModuleRef BinaryenModuleParseWithFeatures(const char* text,
+                                                  BinaryenFeatures features) {
   auto* wasm = new Module;
+  wasm->features.features = features;
   auto parsed = WATParser::parseModule(*wasm, text);
   if (auto* err = parsed.getErr()) {
     Fatal() << err->msg << "\n";

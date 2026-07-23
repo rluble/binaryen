@@ -249,6 +249,7 @@ BINARYEN_API BinaryenFeatures BinaryenFeatureRelaxedAtomics(void);
 BINARYEN_API BinaryenFeatures BinaryenFeatureMultibyte(void);
 BINARYEN_API BinaryenFeatures BinaryenFeatureCustomPageSizes(void);
 BINARYEN_API BinaryenFeatures BinaryenFeatureWideArithmetic(void);
+BINARYEN_API BinaryenFeatures BinaryenFeatureCompactImports(void);
 BINARYEN_API BinaryenFeatures BinaryenFeatureAll(void);
 
 // Modules
@@ -929,7 +930,7 @@ BinaryenAtomicNotify(BinaryenModuleRef module,
                      BinaryenExpressionRef notifyCount,
                      const char* memoryName);
 BINARYEN_API BinaryenExpressionRef
-BinaryenAtomicFence(BinaryenModuleRef module);
+BinaryenAtomicFence(BinaryenModuleRef module, BinaryenMemoryOrder order);
 BINARYEN_API BinaryenExpressionRef
 BinaryenSIMDExtract(BinaryenModuleRef module,
                     BinaryenOp op,
@@ -1220,6 +1221,11 @@ BINARYEN_API void BinaryenExpressionFinalize(BinaryenExpressionRef expr);
 // Makes a deep copy of the given expression.
 BINARYEN_API BinaryenExpressionRef
 BinaryenExpressionCopy(BinaryenExpressionRef expr, BinaryenModuleRef module);
+// Serialize an expression in s-expression form. Implicitly allocates the
+// returned char* with malloc(), and expects the user to free() them manually
+// once not needed anymore.
+BINARYEN_API char*
+BinaryenExpressionAllocateAndWriteText(BinaryenExpressionRef expr);
 
 // Block
 
@@ -1955,10 +1961,11 @@ BinaryenAtomicNotifySetNotifyCount(BinaryenExpressionRef expr,
 // AtomicFence
 
 // Gets the order of an `atomic.fence` expression.
-BINARYEN_API uint8_t BinaryenAtomicFenceGetOrder(BinaryenExpressionRef expr);
+BINARYEN_API BinaryenMemoryOrder
+BinaryenAtomicFenceGetOrder(BinaryenExpressionRef expr);
 // Sets the order of an `atomic.fence` expression.
 BINARYEN_API void BinaryenAtomicFenceSetOrder(BinaryenExpressionRef expr,
-                                              uint8_t order);
+                                              BinaryenMemoryOrder order);
 
 // SIMDExtract
 
@@ -3124,8 +3131,12 @@ BINARYEN_API void BinaryenModuleSetFeatures(BinaryenModuleRef module,
 // ========== Module Operations ==========
 //
 
-// Parse a module in s-expression text format
+// Parse a module in s-expression text format, assuming the MVP feature set.
 BINARYEN_API BinaryenModuleRef BinaryenModuleParse(const char* text);
+
+// Parse a module in s-expression text format, enabling the given feature set.
+BINARYEN_API BinaryenModuleRef
+BinaryenModuleParseWithFeatures(const char* text, BinaryenFeatures features);
 
 // Print a module to stdout in s-expression text format. Useful for debugging.
 BINARYEN_API void BinaryenModulePrint(BinaryenModuleRef module);

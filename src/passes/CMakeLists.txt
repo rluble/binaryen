@@ -26,6 +26,7 @@ set(passes_SOURCES
   CodeFolding.cpp
   ConstantFieldPropagation.cpp
   ConstHoisting.cpp
+  ConstraintAnalysis.cpp
   DataFlowOpts.cpp
   DeadArgumentElimination.cpp
   DeadArgumentElimination2.cpp
@@ -94,6 +95,7 @@ set(passes_SOURCES
   PrintCallGraph.cpp
   PrintFeatures.cpp
   PrintFunctionMap.cpp
+  RemoveStart.cpp
   RoundTrip.cpp
   SetGlobals.cpp
   SignaturePruning.cpp
