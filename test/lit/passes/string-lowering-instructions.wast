@@ -75,7 +75,7 @@
 
   ;; CHECK:      (import "wasm:js-string" "fromCharCodeArray" (func $fromCharCodeArray (type $19) (param (ref null $1) i32 i32) (result (ref extern))))
 
-  ;; CHECK:      (import "wasm:js-string" "fromCodePoint" (func $fromCodePoint_18 (type $20) (param i32) (result (ref extern))))
+  ;; CHECK:      (import "wasm:js-string" "fromCodePoint" (func $fromCodePoint_19 (type $20) (param i32) (result (ref extern))))
 
   ;; CHECK:      (import "wasm:js-string" "concat" (func $concat (type $21) (param externref externref) (result (ref extern))))
 
@@ -118,7 +118,7 @@
   )
 
   ;; CHECK:      (func $string.from_code_point (type $16) (result externref)
-  ;; CHECK-NEXT:  (call $fromCodePoint_18
+  ;; CHECK-NEXT:  (call $fromCodePoint_19
   ;; CHECK-NEXT:   (i32.const 1)
   ;; CHECK-NEXT:  )
   ;; CHECK-NEXT: )
@@ -408,5 +408,53 @@
     (call $call-param-null
       (ref.null string)
     )
+  )
+
+
+  ;; CHECK:      (func $casts (type $15) (param $str externref)
+  ;; CHECK-NEXT:  (local $ext externref)
+  ;; CHECK-NEXT:  (local $obj anyref)
+  ;; CHECK-NEXT:  (local $eq eqref)
+  ;; CHECK-NEXT:  (local $scratch externref)
+  ;; CHECK-NEXT:  (local.set $str
+  ;; CHECK-NEXT:   (block (result externref)
+  ;; CHECK-NEXT:    (local.set $scratch
+  ;; CHECK-NEXT:     (extern.convert_any
+  ;; CHECK-NEXT:      (any.convert_extern
+  ;; CHECK-NEXT:       (local.get $ext)
+  ;; CHECK-NEXT:      )
+  ;; CHECK-NEXT:     )
+  ;; CHECK-NEXT:    )
+  ;; CHECK-NEXT:    (local.set $ext
+  ;; CHECK-NEXT:     (local.get $str)
+  ;; CHECK-NEXT:    )
+  ;; CHECK-NEXT:    (local.get $scratch)
+  ;; CHECK-NEXT:   )
+  ;; CHECK-NEXT:  )
+  ;; CHECK-NEXT:  (local.set $obj
+  ;; CHECK-NEXT:   (any.convert_extern
+  ;; CHECK-NEXT:    (local.get $str)
+  ;; CHECK-NEXT:   )
+  ;; CHECK-NEXT:  )
+  ;; CHECK-NEXT:  (local.set $eq
+  ;; CHECK-NEXT:   (ref.cast nullref
+  ;; CHECK-NEXT:    (any.convert_extern
+  ;; CHECK-NEXT:     (local.get $str)
+  ;; CHECK-NEXT:    )
+  ;; CHECK-NEXT:   )
+  ;; CHECK-NEXT:  )
+  ;; CHECK-NEXT: )
+  (func $casts (param $str stringref)
+    (local $ext externref)
+    (local $obj anyref)
+    (local $eq eqref)
+    ;; convert an externref to a stringref
+    (local.set $str (ref.cast (ref null string) (any.convert_extern (local.get $ext)))
+    ;; convert a stringref to an externref
+    (local.set $ext (extern.convert_any  (local.get $str))))
+    ;; convert a stringref to anyref
+    (local.set $obj (ref.cast (ref any) (local.get $str)))
+    ;; cast a strin ref to an eqref
+    (local.set $eq (ref.cast (ref null eq) (local.get $str)))
   )
 )

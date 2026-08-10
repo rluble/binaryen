@@ -486,6 +486,40 @@ struct StringLowering : public StringGathering {
                                         {curr->ref, curr->start, curr->end},
                                         lowering.nnExt));
       }
+
+      void visitRefAs(RefAs* curr) {
+        Builder builder(*getModule());
+        if (curr->op == ExternConvertAny &&
+            curr->value->type.getHeapType() == HeapType::ext) {
+          // Turn (extern.convert_any str) into str
+          replaceCurrent(curr->value);
+        }
+      }
+
+      void visitRefCast(RefCast* curr) {
+        Builder builder(*getModule());
+        // Casting a stringref expression became casting an externref expression, which would
+        // not be valid, but in appears in this intermediate state where stringrefs are lowered
+        // to externrefs.
+        if (curr->ref->type.getHeapType() == HeapType::ext) {
+          // Turn (ref.cast (ref ...) $str) into (any.convert_extern $str)
+          Expression* innerExpression =
+            builder.makeRefAs(AnyConvertExtern, curr->ref);
+          if (curr->getCastType().getHeapType() != HeapType::ext) {
+            // And enclose with (ref.cast (ref ...) ...) if the cast type was not stringref.
+            innerExpression =
+              builder.makeRefCast(innerExpression, curr->getCastType());
+          }
+          replaceCurrent(innerExpression);
+        } else if (curr->getCastType().getHeapType() == HeapType::ext) {
+          // A cast to stringref became a cast to externref, which is not valid but appears in
+          // the intermediate state while lowering.
+          // Turn (ref.cast (ref string) (any.convert_extern str)) into str
+          Expression* innerExpression =
+            builder.makeRefAs(ExternConvertAny, curr->ref);
+          replaceCurrent(innerExpression);
+        }
+      }
     };
 
     Replacer replacer(*this);
