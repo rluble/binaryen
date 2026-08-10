@@ -2697,7 +2697,9 @@ public:
         }
         return value;
       case AnyConvertExtern:
+      case StringConvertExtern:
         return value.internalize();
+      case ExternConvertString:
       case ExternConvertAny:
         return value.externalize();
     }

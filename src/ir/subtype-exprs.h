@@ -474,11 +474,20 @@ struct SubtypingDiscoverer : public OverriddenVisitor<SubType> {
         return;
       case AnyConvertExtern:
         return;
+      case StringConvertExtern:
+        return;
       case ExternConvertAny:
         if (curr->type != Type::unreachable) {
           auto any =
             HeapTypes::any.getBasic(curr->type.getHeapType().getShared());
           self()->noteSubtype(curr->value, Type(any, Nullable));
+        }
+        return;
+      case ExternConvertString:
+        if (curr->type != Type::unreachable) {
+          auto string =
+            HeapTypes::string.getBasic(curr->type.getHeapType().getShared());
+          self()->noteSubtype(curr->value, Type(string, Nullable));
         }
         return;
     }

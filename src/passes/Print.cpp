@@ -2556,8 +2556,14 @@ struct PrintExpressionContents
       case AnyConvertExtern:
         printMedium(o, "any.convert_extern");
         break;
+      case StringConvertExtern:
+        printMedium(o, "string.convert_extern");
+        break;
       case ExternConvertAny:
         printMedium(o, "extern.convert_any");
+        break;
+      case ExternConvertString:
+        printMedium(o, "extern.convert_string");
         break;
       default:
         WASM_UNREACHABLE("invalid ref.is_*");

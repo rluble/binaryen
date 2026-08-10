@@ -408,12 +408,23 @@ switch (buf[0]) {
           return Ok{};
         }
         goto parse_error;
-      case 'x':
-        if (op == "extern.convert_any"sv) {
-          CHECK_ERR(makeRefAs(ctx, pos, annotations, ExternConvertAny));
-          return Ok{};
+      case 'x': {
+        switch (buf[15]) {
+          case 'a':
+            if (op == "extern.convert_any"sv) {
+              CHECK_ERR(makeRefAs(ctx, pos, annotations, ExternConvertAny));
+              return Ok{};
+            }
+            goto parse_error;
+          case 's':
+            if (op == "extern.convert_string"sv) {
+              CHECK_ERR(makeRefAs(ctx, pos, annotations, ExternConvertString));
+              return Ok{};
+            }
+            goto parse_error;
+          default: goto parse_error;
         }
-        goto parse_error;
+      }
       default: goto parse_error;
     }
   }
@@ -5159,6 +5170,12 @@ switch (buf[0]) {
                           case 's':
                             if (op == "string.const"sv) {
                               CHECK_ERR(makeStringConst(ctx, pos, annotations));
+                              return Ok{};
+                            }
+                            goto parse_error;
+                          case 'v':
+                            if (op == "string.convert_extern"sv) {
+                              CHECK_ERR(makeRefAs(ctx, pos, annotations, StringConvertExtern));
                               return Ok{};
                             }
                             goto parse_error;

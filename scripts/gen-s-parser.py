@@ -682,6 +682,8 @@ instructions = [
     ("ref.as_non_null",      "makeRefAs(RefAsNonNull)"),
     ("any.convert_extern",   "makeRefAs(AnyConvertExtern)"),
     ("extern.convert_any",   "makeRefAs(ExternConvertAny)"),
+    ("string.convert_extern","makeRefAs(StringConvertExtern)"),
+    ("extern.convert_string","makeRefAs(ExternConvertString)"),
     ("string.new_lossy_utf8_array",  "makeStringNew(StringNewLossyUTF8Array)"),
     ("string.new_wtf16_array", "makeStringNew(StringNewWTF16Array)"),
     ("string.from_code_point", "makeStringNew(StringNewFromCodePoint)"),

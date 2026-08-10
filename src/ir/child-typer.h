@@ -1266,6 +1266,12 @@ template<typename Subtype> struct ChildTyper : OverriddenVisitor<Subtype> {
       case ExternConvertAny:
         note(&curr->value, Type(HeapType::any, Nullable));
         return;
+      case StringConvertExtern:
+        note(&curr->value, Type(HeapType::ext, Nullable));
+        return;
+      case ExternConvertString:
+        note(&curr->value, Type(HeapType::string, Nullable));
+        return;
     }
     WASM_UNREACHABLE("unexpected op");
   }

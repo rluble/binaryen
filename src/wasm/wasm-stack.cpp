@@ -2953,10 +2953,12 @@ void BinaryInstWriter::visitRefAs(RefAs* curr) {
       o << static_cast<int8_t>(BinaryConsts::RefAsNonNull);
       break;
     case AnyConvertExtern:
+    case StringConvertExtern:
       o << static_cast<int8_t>(BinaryConsts::GCPrefix)
         << U32LEB(BinaryConsts::AnyConvertExtern);
       break;
     case ExternConvertAny:
+    case ExternConvertString:
       o << static_cast<int8_t>(BinaryConsts::GCPrefix)
         << U32LEB(BinaryConsts::ExternConvertAny);
       break;

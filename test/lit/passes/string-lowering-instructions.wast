@@ -71,7 +71,7 @@
 
   ;; CHECK:      (import "wasm:js-string" "fromCharCodeArray" (func $fromCharCodeArray (type $19) (param (ref null $array16) i32 i32) (result (ref extern))))
 
-  ;; CHECK:      (import "wasm:js-string" "fromCodePoint" (func $fromCodePoint_19 (type $20) (param i32) (result (ref extern))))
+  ;; CHECK:      (import "wasm:js-string" "fromCodePoint" (func $fromCodePoint_20 (type $20) (param i32) (result (ref extern))))
 
   ;; CHECK:      (import "wasm:js-string" "concat" (func $concat (type $21) (param externref externref) (result (ref extern))))
 
@@ -116,7 +116,7 @@
   )
 
   ;; CHECK:      (func $string.from_code_point (type $16) (result externref)
-  ;; CHECK-NEXT:  (call $fromCodePoint_19
+  ;; CHECK-NEXT:  (call $fromCodePoint_20
   ;; CHECK-NEXT:   (i32.const 1)
   ;; CHECK-NEXT:  )
   ;; CHECK-NEXT: )
@@ -422,4 +422,23 @@
       (ref.null string)
     )
   )
+
+  ;; CHECK:      (func $casts (type $13) (param $str externref)
+  ;; CHECK-NEXT:  (local $ext externref)
+  ;; CHECK-NEXT:  (local.set $str
+  ;; CHECK-NEXT:   (local.get $ext)
+  ;; CHECK-NEXT:  )
+  ;; CHECK-NEXT:  (local.set $ext
+  ;; CHECK-NEXT:   (local.get $str)
+  ;; CHECK-NEXT:  )
+  ;; CHECK-NEXT: )
+  (func $casts (param $str stringref)
+    (local $ext externref)
+    ;; convert an externref to a stringref
+    (local.set $str (string.convert_extern (local.get $ext)))
+    ;; convert a stringref to an externref
+    (local.set $ext (extern.convert_string  (local.get $str)))
+
+  )
 )
+

@@ -891,6 +891,12 @@ struct TransferFn : OverriddenVisitor<TransferFn> {
       case ExternConvertAny:
         push(Type(HeapType::any, type.getNullability()));
         return;
+      case StringConvertExtern:
+        push(Type(HeapType::ext, type.getNullability()));
+        return;
+      case ExternConvertString:
+        push(Type(HeapType::string, type.getNullability()));
+        return;
     }
     WASM_UNREACHABLE("unexpected op");
   }

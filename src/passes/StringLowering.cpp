@@ -494,6 +494,18 @@ struct StringLowering : public StringGathering {
                                         {curr->ref, curr->start, curr->end},
                                         lowering.nnExt));
       }
+
+      void visitRefAs(RefAs* curr) {
+        Builder builder(*getModule());
+        switch (curr->op) {
+          case ExternConvertString:
+          case StringConvertExtern:
+            replaceCurrent(curr->value);
+            return;
+          default:
+            return;
+        }
+      }
     };
 
     Replacer replacer(*this);

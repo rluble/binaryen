@@ -608,6 +608,8 @@ enum RefAsOp {
   RefAsNonNull,
   AnyConvertExtern,
   ExternConvertAny,
+  StringConvertExtern,
+  ExternConvertString,
 };
 
 enum BrOnOp {

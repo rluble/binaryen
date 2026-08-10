@@ -2605,6 +2605,34 @@ void FunctionValidator::visitRefAs(RefAs* curr) {
         "extern.convert_any value should be an anyref");
       break;
     }
+    case StringConvertExtern: {
+      shouldBeTrue(getModule()->features.hasGC(),
+                   curr,
+                   "any.convert_extern requries GC [--enable-gc]");
+      if (curr->type == Type::unreachable) {
+        return;
+      }
+      shouldBeSubTypeIgnoringShared(
+        curr->value->type,
+        Type(HeapType::ext, Nullable),
+        curr->value,
+        "string.convert_extern value should be an externref");
+      break;
+    }
+    case ExternConvertString: {
+      shouldBeTrue(getModule()->features.hasGC(),
+                   curr,
+                   "extern.convert_any requries GC [--enable-gc]");
+      if (curr->type == Type::unreachable) {
+        return;
+      }
+      shouldBeSubTypeIgnoringShared(
+        curr->value->type,
+        Type(HeapType::string, Nullable),
+        curr->value,
+        "extern.convert_string value should be an stringref");
+      break;
+    }
   }
 }
 

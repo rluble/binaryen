@@ -1276,6 +1276,8 @@ enum ASTNodes {
   StringEncodeWTF16Array = 0xb3,
   StringNewLossyUTF8Array = 0xb4,
   StringEncodeLossyUTF8Array = 0xb6,
+  StringConvertExtern = 0xb7,
+  ExternConvertString = 0xb8,
 
   // stack switching opcodes
   ContNew = 0xe0,

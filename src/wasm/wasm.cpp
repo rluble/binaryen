@@ -1507,7 +1507,13 @@ void RefAs::finalize() {
                   value->type.getNullability(),
                   Inexact);
       break;
+    case StringConvertExtern:
+      type = Type(HeapTypes::string.getBasic(valHeapType.getShared()),
+                  value->type.getNullability(),
+                  Inexact);
+      break;
     case ExternConvertAny:
+    case ExternConvertString:
       type = Type(HeapTypes::ext.getBasic(valHeapType.getShared()),
                   value->type.getNullability(),
                   Inexact);
